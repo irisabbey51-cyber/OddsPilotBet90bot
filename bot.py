@@ -1,142 +1,209 @@
 import logging
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
-    ContextTypes
-)
-from config import Config
-from handlers.start import start_command, settings_command, handle_settings_callback
-from handlers.odds import odds_command, handle_odds_callback, process_odds_query
-from handlers.bets import bet_command, handle_bet_callback, tips_command, process_tip_query
-from handlers.insights import insights_command, predict_command, compare_command, handle_insight_callback, handle_predict_callback, process_predict_query
-import asyncio
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from dotenv import load_dotenv
+import openai
+
+# Load environment variables
+load_dotenv()
 
 # Setup logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class OddsPilotBot:
-    def __init__(self):
-        self.application = Application.builder().token(Config.TELEGRAM_TOKEN).build()
-        self.setup_handlers()
-        
-    def setup_handlers(self):
-        """Setup all command handlers"""
-        # Command handlers
-        self.application.add_handler(CommandHandler("start", start_command))
-        self.application.add_handler(CommandHandler("odds", odds_command))
-        self.application.add_handler(CommandHandler("bet", bet_command))
-        self.application.add_handler(CommandHandler("insights", insights_command))
-        self.application.add_handler(CommandHandler("predict", predict_command))
-        self.application.add_handler(CommandHandler("compare", compare_command))
-        self.application.add_handler(CommandHandler("tips", tips_command))
-        self.application.add_handler(CommandHandler("settings", settings_command))
-        
-        # Callback query handler for inline buttons
-        self.application.add_handler(CallbackQueryHandler(self.handle_callback))
-        
-        # Message handlers
-        self.application.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND, 
-            self.handle_text
-        ))
-        
-        # Error handler
-        self.application.add_error_handler(self.error_handler)
-    
-    async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle inline button callbacks"""
-        query = update.callback_query
-        await query.answer()
-        
-        data = query.data.split('_')
-        action = data[0]
-        
-        if action == 'odds':
-            await handle_odds_callback(query, context, data[1:])
-        elif action == 'bet':
-            await handle_bet_callback(query, context, data[1:])
-        elif action == 'insight':
-            await handle_insight_callback(query, context, data[1:])
-        elif action == 'predict':
-            await handle_predict_callback(query, context, data[1:])
-        elif action == 'back':
-            await self.handle_back_callback(query, context)
-        elif action == 'settings':
-            await handle_settings_callback(query, context, data[1:])
-    
-    async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle text messages"""
-        text = update.message.text.lower()
-        
-        # Check for specific keywords
-        if any(word in text for word in ['odds', 'betting', 'game', 'match']):
-            await process_odds_query(update, context)
-        elif any(word in text for word in ['predict', 'prediction', 'win']):
-            await process_predict_query(update, context)
-        elif any(word in text for word in ['tip', 'advice', 'help']):
-            await process_tip_query(update, context)
-        else:
-            await update.message.reply_text(
-                f"🤖 Welcome to {Config.BOT_NAME}!\n\n"
-                "I'm your AI-powered betting assistant. Here's what I can do:\n\n"
-                "📊 /odds - Get AI-generated betting odds\n"
-                "🎯 /bet - Get smart betting advice\n"
-                "🧠 /insights - AI-powered game insights\n"
-                "🔮 /predict - Get match predictions\n"
-                "📈 /compare - Compare two teams\n"
-                "💡 /tips - Get betting tips\n\n"
-                "Just send me a message about any game or team!"
-            )
-    
-    async def handle_back_callback(self, query, context):
-        """Handle back button callback"""
-        keyboard = [
-            [
-                InlineKeyboardButton("📊 Odds", callback_data="odds_menu"),
-                InlineKeyboardButton("🎯 Bet", callback_data="bet_menu")
-            ],
-            [
-                InlineKeyboardButton("🧠 Insights", callback_data="insight_menu"),
-                InlineKeyboardButton("🔮 Predict", callback_data="predict_menu")
-            ],
-            [
-                InlineKeyboardButton("💡 Tips", callback_data="bet_tips"),
-                InlineKeyboardButton("⚙️ Settings", callback_data="settings_menu")
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(
-            f"🎯 **{Config.BOT_NAME} - Main Menu**\n\n"
-            "Your AI-powered betting assistant!\n"
-            "Choose an option below:",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-    
-    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle errors"""
-        logger.error(f"Update {update} caused error {context.error}")
-        
-        if update and update.effective_message:
-            await update.effective_message.reply_text(
-                "⚠️ An error occurred. Please try again later.\n\n"
-                "If the problem persists, use /start to restart the bot."
-            )
-    
-    def run(self):
-        """Start the bot"""
-        logger.info(f"Starting {Config.BOT_NAME} bot...")
-        self.application.run_polling()
+# Config
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+openai.api_key = OPENAI_API_KEY
 
-if __name__ == '__main__':
-    bot = OddsPilotBot()
-    bot.run()
+# AI Service Functions
+async def get_ai_response(prompt, context_text=""):
+    """Get response from OpenAI"""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a sports betting assistant providing odds, predictions, and betting advice."},
+                {"role": "user", "content": f"{prompt}\n\nContext: {context_text}"}
+            ],
+            max_tokens=500,
+            temperature=0.7
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"OpenAI error: {e}")
+        return None
+
+# Start Command
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    welcome_text = (
+        f"🎯 **Welcome to OddsPilotBet90, {user.first_name}!**\n\n"
+        "I'm your AI-powered betting assistant!\n\n"
+        "**Commands:**\n"
+        "📊 /odds - Get AI betting odds\n"
+        "🎯 /bet - Get betting advice\n"
+        "🧠 /insights - Game insights\n"
+        "🔮 /predict - Match predictions\n"
+        "💡 /tips - Daily betting tips\n"
+        "⚙️ /settings - Settings\n\n"
+        "Just type any game or team name!"
+    )
+    keyboard = [
+        [InlineKeyboardButton("📊 Odds", callback_data="odds"), InlineKeyboardButton("🎯 Bet", callback_data="bet")],
+        [InlineKeyboardButton("🧠 Insights", callback_data="insights"), InlineKeyboardButton("🔮 Predict", callback_data="predict")],
+        [InlineKeyboardButton("💡 Tips", callback_data="tips"), InlineKeyboardButton("⚙️ Settings", callback_data="settings")]
+    ]
+    await update.message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+# Odds Command
+async def odds_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ Generating AI odds analysis...")
+    
+    prompt = "Generate realistic betting odds for today's top sports matches. Include moneyline, spread, and over/under for 3 different sports."
+    response = await get_ai_response(prompt)
+    
+    if response:
+        await update.message.reply_text(f"📊 **AI Betting Odds**\n\n{response}", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("📊 **Sample Odds**\n\n⚽ Soccer: Team A -150 vs Team B +130\n🏀 Basketball: Lakers -2.5 (-110)\n🎾 Tennis: Player A -120 vs Player B +100")
+
+# Bet Command
+async def bet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ Getting smart betting advice...")
+    
+    prompt = "Provide smart betting advice including bankroll management, value betting tips, and common mistakes to avoid."
+    response = await get_ai_response(prompt)
+    
+    if response:
+        await update.message.reply_text(f"🎯 **Betting Advice**\n\n{response}", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("🎯 **Tips**\n\n1. Only bet 1-3% of bankroll\n2. Research before betting\n3. Look for value in odds\n4. Stay disciplined")
+
+# Insights Command
+async def insights_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ Generating AI insights...")
+    
+    prompt = "Provide detailed sports betting insights including team performance analysis, market trends, and key factors to consider."
+    response = await get_ai_response(prompt)
+    
+    if response:
+        await update.message.reply_text(f"🧠 **AI Insights**\n\n{response}", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("🧠 **Key Insights**\n\n• Home teams win 55% of games\n• Favorites cover spread 48% of time\n• Overs hit 52% of games\n• Form is more important than history")
+
+# Predict Command
+async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ Making AI predictions...")
+    
+    prompt = "Predict the outcomes of today's major sports matches. Include confidence levels and reasoning."
+    response = await get_ai_response(prompt)
+    
+    if response:
+        await update.message.reply_text(f"🔮 **Match Predictions**\n\n{response}", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("🔮 **Prediction Tips**\n\n• Look at recent form\n• Check injury reports\n• Consider home advantage\n• Weather can impact games")
+
+# Tips Command
+async def tips_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ Generating daily tips...")
+    
+    prompt = "Provide daily betting tips including tip of the day, strategic advice, and what to watch for."
+    response = await get_ai_response(prompt)
+    
+    if response:
+        await update.message.reply_text(f"💡 **Daily Tips**\n\n{response}", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("💡 **Tip of the Day**\n\nAlways bet with your head, not your heart. Research is key!")
+
+# Settings Command
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("🏟️ Set Sport", callback_data="set_sport")],
+        [InlineKeyboardButton("🔔 Notifications", callback_data="notifications")],
+        [InlineKeyboardButton("🔙 Back", callback_data="back")]
+    ]
+    await update.message.reply_text("⚙️ **Settings**\n\nCustomize your experience:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+# Handle Callbacks
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data == "odds":
+        await odds_command(update, context)
+    elif data == "bet":
+        await bet_command(update, context)
+    elif data == "insights":
+        await insights_command(update, context)
+    elif data == "predict":
+        await predict_command(update, context)
+    elif data == "tips":
+        await tips_command(update, context)
+    elif data == "settings" or data == "set_sport" or data == "notifications":
+        keyboard = [
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="back")]
+        ]
+        await query.edit_message_text("⚙️ Settings saved!", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif data == "back":
+        keyboard = [
+            [InlineKeyboardButton("📊 Odds", callback_data="odds"), InlineKeyboardButton("🎯 Bet", callback_data="bet")],
+            [InlineKeyboardButton("🧠 Insights", callback_data="insights"), InlineKeyboardButton("🔮 Predict", callback_data="predict")],
+            [InlineKeyboardButton("💡 Tips", callback_data="tips"), InlineKeyboardButton("⚙️ Settings", callback_data="settings")]
+        ]
+        await query.edit_message_text("🎯 **OddsPilotBet90 - Main Menu**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+# Handle Text Messages
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    
+    if " vs " in text:
+        await update.message.reply_text(f"⏳ Analyzing {text}...")
+        prompt = f"Analyze the matchup between {text}. Provide predictions, key factors, and who you think will win."
+        response = await get_ai_response(prompt, text)
+        
+        if response:
+            await update.message.reply_text(f"📊 **Match Analysis**\n\n{response}", parse_mode='Markdown')
+        else:
+            await update.message.reply_text(f"📊 **Analysis for {text}**\n\nI'll analyze this matchup for you! Use /predict for detailed predictions.")
+    else:
+        await update.message.reply_text(
+            "🤖 I'm your betting assistant!\n\n"
+            "Try these commands:\n"
+            "📊 /odds - Betting odds\n"
+            "🎯 /bet - Betting advice\n"
+            "🧠 /insights - Game insights\n"
+            "🔮 /predict - Predictions\n"
+            "💡 /tips - Daily tips\n\n"
+            "Or type 'Team A vs Team B' for analysis!"
+        )
+
+# Error Handler
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Update {update} caused error {context.error}")
+    if update and update.effective_message:
+        await update.effective_message.reply_text("⚠️ An error occurred. Please try again.")
+
+# Main
+def main():
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("odds", odds_command))
+    app.add_handler(CommandHandler("bet", bet_command))
+    app.add_handler(CommandHandler("insights", insights_command))
+    app.add_handler(CommandHandler("predict", predict_command))
+    app.add_handler(CommandHandler("tips", tips_command))
+    app.add_handler(CommandHandler("settings", settings_command))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_error_handler(error_handler)
+    
+    logger.info("Bot started! 🚀")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
