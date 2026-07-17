@@ -9,7 +9,10 @@ from telegram.ext import (
     ContextTypes
 )
 from config import Config
-from handlers import start, odds, bets, insights
+from handlers.start import start_command, settings_command, handle_settings_callback
+from handlers.odds import odds_command, handle_odds_callback, process_odds_query
+from handlers.bets import bet_command, handle_bet_callback, tips_command, process_tip_query
+from handlers.insights import insights_command, predict_command, compare_command, handle_insight_callback, handle_predict_callback, process_predict_query
 import asyncio
 
 # Setup logging
@@ -27,14 +30,14 @@ class OddsPilotBot:
     def setup_handlers(self):
         """Setup all command handlers"""
         # Command handlers
-        self.application.add_handler(CommandHandler("start", start.start_command))
-        self.application.add_handler(CommandHandler("odds", odds.odds_command))
-        self.application.add_handler(CommandHandler("bet", bets.bet_command))
-        self.application.add_handler(CommandHandler("insights", insights.insights_command))
-        self.application.add_handler(CommandHandler("predict", insights.predict_command))
-        self.application.add_handler(CommandHandler("compare", insights.compare_command))
-        self.application.add_handler(CommandHandler("tips", bets.tips_command))
-        self.application.add_handler(CommandHandler("settings", start.settings_command))
+        self.application.add_handler(CommandHandler("start", start_command))
+        self.application.add_handler(CommandHandler("odds", odds_command))
+        self.application.add_handler(CommandHandler("bet", bet_command))
+        self.application.add_handler(CommandHandler("insights", insights_command))
+        self.application.add_handler(CommandHandler("predict", predict_command))
+        self.application.add_handler(CommandHandler("compare", compare_command))
+        self.application.add_handler(CommandHandler("tips", tips_command))
+        self.application.add_handler(CommandHandler("settings", settings_command))
         
         # Callback query handler for inline buttons
         self.application.add_handler(CallbackQueryHandler(self.handle_callback))
@@ -57,17 +60,17 @@ class OddsPilotBot:
         action = data[0]
         
         if action == 'odds':
-            await odds.handle_odds_callback(query, context, data[1:])
+            await handle_odds_callback(query, context, data[1:])
         elif action == 'bet':
-            await bets.handle_bet_callback(query, context, data[1:])
+            await handle_bet_callback(query, context, data[1:])
         elif action == 'insight':
-            await insights.handle_insight_callback(query, context, data[1:])
+            await handle_insight_callback(query, context, data[1:])
         elif action == 'predict':
-            await insights.handle_predict_callback(query, context, data[1:])
+            await handle_predict_callback(query, context, data[1:])
         elif action == 'back':
             await self.handle_back_callback(query, context)
         elif action == 'settings':
-            await start.handle_settings_callback(query, context, data[1:])
+            await handle_settings_callback(query, context, data[1:])
     
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle text messages"""
@@ -75,11 +78,11 @@ class OddsPilotBot:
         
         # Check for specific keywords
         if any(word in text for word in ['odds', 'betting', 'game', 'match']):
-            await odds.process_odds_query(update, context)
+            await process_odds_query(update, context)
         elif any(word in text for word in ['predict', 'prediction', 'win']):
-            await insights.process_predict_query(update, context)
+            await process_predict_query(update, context)
         elif any(word in text for word in ['tip', 'advice', 'help']):
-            await bets.process_tip_query(update, context)
+            await process_tip_query(update, context)
         else:
             await update.message.reply_text(
                 f"🤖 Welcome to {Config.BOT_NAME}!\n\n"
